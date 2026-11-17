@@ -1,35 +1,14 @@
-// Offline verification of pinned development/runtime source dependencies.
+// Immutable dependency ownership; no source snapshots in this runtime.
 import assert from 'node:assert/strict';
-import {createHash} from 'node:crypto';
-import {readFileSync, readdirSync, lstatSync} from 'node:fs';
-import {fileURLToPath} from 'node:url';
-import {join} from 'node:path';
-const root = fileURLToPath(new URL('..', import.meta.url));
-const locks = ["framework-source.lock.json"];
-let count = 0;
-for (const name of locks) {
-  const receipt = JSON.parse(readFileSync(join(root, name), 'utf8'));
-  assert(/^[a-f0-9]{40}$/.test(receipt.commit), 'Exact source commit required');
-  for (const [path, digest] of Object.entries(receipt.files)) {
-    const logical = [receipt.destination, path].filter(Boolean).join('/');
-    assert(!logical.startsWith('/') && !logical.includes('\\') && logical.split('/').every(p => p && p !== '.' && p !== '..'));
-    let full = root;
-    for (const part of logical.split('/')) { full = join(full, part); assert(!lstatSync(full).isSymbolicLink()); }
-    assert.equal('sha256:' + createHash('sha256').update(readFileSync(full)).digest('hex'), digest, logical);
-    count++;
-  }
-  if (receipt.destination) {
-    const visit = (dir, prefix = '') => readdirSync(dir, {withFileTypes:true}).flatMap(e => {
-      assert(!e.isSymbolicLink());
-      return e.isDirectory() ? visit(join(dir,e.name),prefix+e.name+'/') : [prefix+e.name];
-    });
-    assert.deepEqual(visit(join(root, receipt.destination)).sort(), Object.keys(receipt.files).sort(), 'Unpinned dependency files');
-  }
+import {readFileSync,existsSync} from 'node:fs';
+const root=new URL('../',import.meta.url);
+const manifest=readFileSync(new URL('Cargo.toml',root),'utf8');
+const lock=readFileSync(new URL('Cargo.lock',root),'utf8');
+for(const [name,repo] of [['lekalo-adapter-sdk-rust','lekalo-adapter-sdk'],['lekalo-python-fastapi','lekalo-python-fastapi']]) {
+ const line=manifest.split('\n').find(s=>s.startsWith(name+' = '));
+ const pin=line?.match(/rev = "([a-f0-9]{40})"/)?.[1];
+ assert(pin && line.includes(`git = "https://github.com/ichinya/${repo}"`));
+ assert(lock.includes(`git+https://github.com/ichinya/${repo}?rev=${pin}#${pin}`));
 }
-console.log(JSON.stringify({ok:true,files:count}));
-
-const sdkManifest = readFileSync(join(root, "Cargo.toml"), 'utf8');
-const sdkLock = readFileSync(join(root,'Cargo.lock'),'utf8');
-const pin=sdkManifest.match(/lekalo-adapter-sdk-rust = \{ git = "https:\/\/github.com\/ichinya\/lekalo-adapter-sdk", rev = "([a-f0-9]{40})" \}/)?.[1];
-assert(pin,'SDK must be an immutable dependency on its owner repository');
-assert(sdkLock.includes(`git+https://github.com/ichinya/lekalo-adapter-sdk?rev=${pin}#${pin}`),'Cargo.lock SDK pin must match manifest');
+assert(!existsSync(new URL('vendor/lekalo-python-fastapi/Cargo.toml',root)));
+console.log(JSON.stringify({ok:true,dependencies:2}));
