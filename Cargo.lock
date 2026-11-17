@@ -287,6 +287,7 @@ dependencies = [
 [[package]]
 name = "lekalo-python-fastapi"
 version = "0.1.0"
+source = "git+https://github.com/ichinya/lekalo-python-fastapi?rev=8aa1014ae5b1533e12a46beaca67ee32b4ed8168#8aa1014ae5b1533e12a46beaca67ee32b4ed8168"
 dependencies = [
  "lekalo-adapter-sdk-rust",
  "ruff_python_ast",
