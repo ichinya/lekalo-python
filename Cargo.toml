@@ -10,7 +10,7 @@ publish = false
 
 [dependencies]
 lekalo-python-fastapi = { version = "=0.1.0", path = "vendor/lekalo-python-fastapi" }
-lekalo-adapter-sdk-rust = { git = "https://github.com/ichinya/lekalo-adapter-sdk", rev = "c07d2d5ab4df330cf414303a311563c734c15921" }
+lekalo-adapter-sdk-rust = { git = "https://github.com/ichinya/lekalo-adapter-sdk", rev = "92263c8e4cac9cbfbb38bdab44da71a41d001f20" }
 # Ruff's AST, parser and source-coordinate types form one release set.
 ruff_python_ast = "=0.0.22"
 ruff_python_parser = "=0.0.22"
