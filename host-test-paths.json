@@ -1,0 +1,6 @@
+[
+  "scripts/test-public-python-scan.mjs",
+  "tests/fixtures/python-scan/model",
+  "tests/fixtures/python-scan/standalone",
+  "tests/python-observed-host.test.mjs"
+]
