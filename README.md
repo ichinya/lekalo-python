@@ -14,7 +14,7 @@ node --test tests/scan-protocol.test.mjs tests/fastapi.test.mjs
 
 Произвольный repo/ref и загрузка правил по компонентам требуют последующего resolver/provider API: [lekalo#239](https://github.com/ichinya/lekalo/issues/239), [lekalo#197](https://github.com/ichinya/lekalo/issues/197). Межпроцессные тесты с CLI ядра остаются host-conformance в основном репозитории.
 
-`ci/package-workflow.yml` — неактивный шаблон CI. Для автоматического запуска его нужно установить в `.github/workflows/` учётными данными с правом `workflow`; текущая публикация проверена локально.
+GitHub Actions запускает [проверки пакета](.github/workflows/ci.yml) для pull request и изменений в `main`.
 
 ## Распознавание проектов для `init --adopt`
 
