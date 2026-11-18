@@ -38,3 +38,7 @@ cargo install --locked --path crates/discovery --root /your/tools
 ```
 
 Добавьте `/your/tools/bin` в PATH, укажите `services.discovery/python: {command: [lekalo-python-discovery]}` в `lekalo.yaml` и выполните `lekalo runtime lock`. Операции: `describe`, `discovery.describe`, `discovery.inspect`; входные файлы передаются как данные, процесс не читает проект. [Контракт сервиса](https://github.com/ichinya/lekalo/blob/feat/external-services-241/docs/external-services.md). Сборка сервиса использует `debug=0`, `incremental=false`.
+
+## Portable component runtime
+
+Use `gh/ichinya/lekalo-python` with Python 3 on PATH. The v1 runtime parses Python ASTs from the files supplied by Lekalo. Framework packages configure direct decorators through `python.decorated-object/v1`. Unsupported app registration reports partial. The observed target scanner remains available for its wider set of framework features. Optional `target_version` selects the required interpreter major.minor or patch version.
