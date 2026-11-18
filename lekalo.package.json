@@ -1,0 +1,13 @@
+{
+  "schema": "lekalo/package/v1",
+  "id": "lekalo-python",
+  "version": "0.2.0",
+  "kind": "runtime",
+  "files": [
+    "runtime/check.py"
+  ],
+  "command": [
+    "python3",
+    "runtime/check.py"
+  ]
+}
