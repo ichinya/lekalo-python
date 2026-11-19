@@ -42,3 +42,8 @@ cargo install --locked --path crates/discovery --root /your/tools
 ## Portable component runtime
 
 Use `gh/ichinya/lekalo-python` with Python 3 on PATH. The v1 runtime parses Python ASTs from the files supplied by Lekalo. Framework packages configure direct decorators through `python.decorated-object/v1`. Unsupported app registration reports partial. The observed target scanner remains available for its wider set of framework features. Optional `target_version` selects the required interpreter major.minor or patch version.
+
+For observed evidence on Target Protocol 1.4.0, pin the provider's
+`evidence/` package in `lekalo.evidence.json` under `fastapi-http` or
+`fastmcp-tools`. The host passes the pins to this scanner. FastAPI retains
+its existing framework-policy opt-in and 1.2.0 scan behavior.
