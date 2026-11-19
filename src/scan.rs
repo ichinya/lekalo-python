@@ -49,7 +49,7 @@ pub enum Tier {
 
 pub fn tier(version: &str) -> Tier {
     match version {
-        "1.1.0" | "1.2.0" => Tier::Native,
+        "1.1.0" | "1.2.0" | "1.4.0" => Tier::Native,
         "0.9.0" | "0.9.1" => Tier::Custody,
         _ => Tier::Predecessor,
     }
@@ -59,6 +59,7 @@ pub struct Scan {
     pub entries: Vec<Value>,
     pub uncertainty: Vec<Value>,
     pub truncated: bool,
+    pub evidence: Vec<Value>,
 }
 
 struct FileRec {
@@ -156,7 +157,7 @@ pub fn run(profile: &Profile, version: &str) -> Result<Scan, &'static str> {
         if text.is_empty() {
             scan.symbols.truncate(1); // module root only
         }
-        if profile.fastapi_policy.is_some() {
+        if profile.fastapi_policy.is_some() || profile.evidence_pins.contains_key("fastmcp-tools") {
             framework_sources.push(crate::fastapi::Source {
                 path: file.path.clone(),
                 module,
@@ -220,9 +221,22 @@ pub fn run(profile: &Profile, version: &str) -> Result<Scan, &'static str> {
             Value::Object(members)
         })
         .collect();
+    let mut evidence = Vec::new();
     if let Some(policy) = &profile.fastapi_policy {
         let framework = crate::fastapi::apply(&framework_sources, &mut entries, policy);
         truncated |= framework.truncated;
+        let partial = truncated || !rows.is_empty() || !framework.uncertainty.is_empty();
+        if version == "1.4.0" {
+            let pins = profile
+                .evidence_pins
+                .get("fastapi-http")
+                .ok_or("evidence-pins")?;
+            evidence.push(crate::fastapi::take_evidence_group(
+                &mut entries,
+                pins,
+                partial,
+            )?);
+        }
         rows.extend(framework.uncertainty);
         rows.sort_by_key(|v| {
             (
@@ -251,10 +265,62 @@ pub fn run(profile: &Profile, version: &str) -> Result<Scan, &'static str> {
             truncated = true;
         }
     }
+    if version == "1.4.0" {
+        if let Some(pins) = profile.evidence_pins.get("fastmcp-tools") {
+            let sources = framework_sources
+                .iter()
+                .map(|file| lekalo_python_fastmcp::Source {
+                    path: &file.path,
+                    module: &file.module,
+                    text: &file.text,
+                    digest: &file.digest,
+                })
+                .collect::<Vec<_>>();
+            let mut anchors = std::collections::BTreeMap::new();
+            for entry in &entries {
+                let Some(path) = entry.get("path").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(nodes) = entry
+                    .get("evidence")
+                    .and_then(|e| e.get("native_symbols"))
+                    .and_then(Value::as_array)
+                else {
+                    continue;
+                };
+                for node in nodes {
+                    let (Some(name), Some(family), Some(id)) = (
+                        node.get("qualified_name").and_then(Value::as_str),
+                        node.get("family").and_then(Value::as_str),
+                        node.get("native").and_then(Value::as_str),
+                    ) else {
+                        continue;
+                    };
+                    anchors
+                        .entry((path, name, family))
+                        .and_modify(|id| *id = None)
+                        .or_insert(Some(id));
+                }
+            }
+            evidence.push(lekalo_python_fastmcp::evidence_group(
+                &sources,
+                pins,
+                truncated || !rows.is_empty(),
+                |path, name, family| {
+                    anchors
+                        .get(&(path, name, family))
+                        .copied()
+                        .flatten()
+                        .map(str::to_owned)
+                },
+            )?);
+        }
+    }
     Ok(Scan {
         entries,
         uncertainty: rows,
         truncated,
+        evidence,
     })
 }
 

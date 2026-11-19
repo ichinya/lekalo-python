@@ -287,7 +287,19 @@ dependencies = [
 [[package]]
 name = "lekalo-python-fastapi"
 version = "0.1.0"
-source = "git+https://github.com/ichinya/lekalo-python-fastapi?rev=8aa1014ae5b1533e12a46beaca67ee32b4ed8168#8aa1014ae5b1533e12a46beaca67ee32b4ed8168"
+source = "git+https://github.com/ichinya/lekalo-python-fastapi?rev=f457ae75e1a425cfa4e9765ca949bed41574e09d#f457ae75e1a425cfa4e9765ca949bed41574e09d"
+dependencies = [
+ "lekalo-adapter-sdk-rust",
+ "ruff_python_ast",
+ "ruff_python_parser",
+ "ruff_source_file",
+ "ruff_text_size",
+]
+
+[[package]]
+name = "lekalo-python-fastmcp"
+version = "0.1.0"
+source = "git+https://github.com/ichinya/lekalo-python-fastmcp?rev=cca239c5bd4fcd1a76f6f292d8b75f8ccdfcb2be#cca239c5bd4fcd1a76f6f292d8b75f8ccdfcb2be"
 dependencies = [
  "lekalo-adapter-sdk-rust",
  "ruff_python_ast",
@@ -302,6 +314,7 @@ version = "0.1.0"
 dependencies = [
  "lekalo-adapter-sdk-rust",
  "lekalo-python-fastapi",
+ "lekalo-python-fastmcp",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_source_file",

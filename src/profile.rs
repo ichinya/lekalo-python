@@ -3,6 +3,8 @@
 //! derived `scope` per root, no overlapping roots, and the canonical
 //! profile digest the 0.9.0+ scan custody binds to.
 
+use std::collections::BTreeMap;
+
 use lekalo_adapter_sdk::generated::protocol::bounds::MAX_DECLARED_CAPABILITIES;
 use lekalo_adapter_sdk::ids::{is_sha256_digest, sha256_hex};
 use lekalo_adapter_sdk::json::{canonical, strict_parse, Value};
@@ -34,6 +36,7 @@ pub struct Profile {
     pub digest: String,
     pub target_resolution: Option<TargetResolution>,
     pub fastapi_policy: Option<String>,
+    pub evidence_pins: BTreeMap<String, Value>,
 }
 
 #[derive(Clone, Debug)]
@@ -81,13 +84,14 @@ impl Profile {
 /// closed reason token; the process exits before serving any request.
 pub fn load(args: &[String]) -> Result<Option<Profile>, &'static str> {
     let fastapi_policy = framework_policy(args)?;
+    let evidence_pins = evidence_pins(args)?;
     let markers: Vec<usize> = args
         .iter()
         .enumerate()
         .filter_map(|(index, arg)| (arg == PROFILE_FLAG).then_some(index))
         .collect();
     if markers.is_empty() {
-        if fastapi_policy.is_some() {
+        if fastapi_policy.is_some() || !evidence_pins.is_empty() {
             return Err("profile-required");
         }
         return Ok(None);
@@ -105,8 +109,50 @@ pub fn load(args: &[String]) -> Result<Option<Profile>, &'static str> {
     let mut profile = validate(&document)?;
     if let Some(profile) = profile.as_mut() {
         profile.fastapi_policy = fastapi_policy;
+        profile.evidence_pins = evidence_pins;
     }
     Ok(profile)
+}
+
+fn evidence_pins(args: &[String]) -> Result<BTreeMap<String, Value>, &'static str> {
+    let mut markers = args
+        .iter()
+        .enumerate()
+        .filter(|(_, arg)| *arg == "--lekalo-evidence-pins-json");
+    let Some((index, _)) = markers.next() else {
+        return Ok(BTreeMap::new());
+    };
+    if markers.next().is_some() {
+        return Err("evidence-pins-duplicate");
+    }
+    let raw = args
+        .get(index + 1)
+        .filter(|s| s.len() <= 8192)
+        .ok_or("evidence-pins-invalid")?;
+    let Value::Object(rows) = strict_parse(raw).map_err(|_| "evidence-pins-invalid")? else {
+        return Err("evidence-pins-invalid");
+    };
+    let mut pins = BTreeMap::new();
+    for (family, value) in rows {
+        let mut fields = value.member_names();
+        fields.sort_unstable();
+        if !matches!(family.as_str(), "fastapi-http" | "fastmcp-tools")
+            || fields != ["package_digest", "schema_digest"]
+            || fields.iter().any(|key| {
+                value
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .is_none_or(|v| !is_sha256_digest(v))
+            })
+        {
+            return Err("evidence-pins-invalid");
+        }
+        pins.insert(family, value);
+    }
+    if pins.is_empty() {
+        return Err("evidence-pins-invalid");
+    }
+    Ok(pins)
 }
 
 fn framework_policy(args: &[String]) -> Result<Option<String>, &'static str> {
@@ -414,6 +460,7 @@ fn validate(candidate: &Value) -> Result<Option<Profile>, &'static str> {
         digest,
         target_resolution,
         fastapi_policy: None,
+        evidence_pins: BTreeMap::new(),
     }))
 }
 

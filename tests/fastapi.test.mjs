@@ -13,13 +13,14 @@ const scratch = mkdtempSync(join(parent, 'lekalo-fastapi-'));
 after(() => { const checked = realpathSync(scratch); assert.equal(dirname(checked), parent); assert(basename(checked).startsWith('lekalo-fastapi-')); rmSync(checked, { recursive: true, force: true, maxRetries: 3 }); });
 const policy = { schema: 'lekalo/framework-policy', version: 1, providers: [{ id: 'fastapi', state: 'enabled' }] };
 const profile = { id: 'standalone', mode: 'observed', target: 'python', readRoots: [{ kind: 'tree', path: 'src' }], exclusions: [], provenance: { origin: 'declared', revision: 'fastapi-synthetic', disposition: 'public-fixture' } };
-function run(files, { enabled = true, operation = 'scan', version = enabled ? '1.2.0' : '1.1.0' } = {}) {
+function run(files, { enabled = true, operation = 'scan', pins, version = enabled ? '1.2.0' : '1.1.0' } = {}) {
   const cwd = mkdtempSync(join(scratch, 'case-'));
   for (const [name, source] of Object.entries(files)) { const path = join(cwd, 'src', name); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, source); }
   const request = { protocol: 'lekalo.target/v1', protocol_version: version, operation, project_root: '.', target: 'python', profile: profile.id };
   request.request_id = `req-${createHash('sha256').update(JSON.stringify(request)).digest('hex')}`;
   const args = ['--lekalo-project-profile-json', JSON.stringify(profile)];
   if (enabled) args.push('--lekalo-framework-policy-json', JSON.stringify(policy));
+  if (pins) args.push('--lekalo-evidence-pins-json', JSON.stringify(pins));
   const result = spawnSync(executable, args, { cwd, input: JSON.stringify(request), encoding: 'utf8', timeout: 20000, maxBuffer: 16 * 1024 * 1024 });
   assert.ifError(result.error); assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
@@ -194,4 +195,37 @@ test('method-list invalidation follows imported values without poisoning fresh l
   assert(unknowns(result).some(row=>row.detail === 'method-list-mutation-or-escape'));
   const unescaped=run({'shop.py': `from fastapi import FastAPI\napp=FastAPI()\nMETHODS=['GET','POST']\nalias=METHODS\n@app.api_route('/safe',methods=alias)\ndef safe(): pass\n`});
   assert.deepEqual(routes(unescaped).map(r=>r.method),['GET','POST']);assert.equal(unknowns(unescaped).length,0);
+});
+
+const pin = { package_digest: 'sha256:' + 'a'.repeat(64), schema_digest: 'sha256:' + 'b'.repeat(64) };
+
+test('generic FastAPI facts carry the same route payload and native carrier', () => {
+  const files = { 'shop.py': simple };
+  const legacy = run(files);
+  const opts = { version: '1.4.0', pins: { 'fastapi-http': pin } };
+  const modern = run(files, opts);
+  assert.equal(modern.status, 'ok');
+  assert.deepEqual(routes(modern), []);
+  const [group] = modern.result.evidence_groups;
+  assert.equal(group.family, 'fastapi-http');
+  assert.equal(group.coverage, 'complete');
+  assert.deepEqual(group.facts.map(f => f.payload), routes(legacy));
+  assert.equal(group.facts[0].subject, routes(legacy)[0].handler_native);
+  const uncertain = run({ 'shop.py': simple.replace("'/items'", 'dynamic_path') }, opts);
+  assert.equal(uncertain.result.evidence_groups[0].coverage, 'partial');
+});
+
+test('generic FastMCP registration has a verified native server and handler', () => {
+  const files = { 'server.py': "from fastmcp import FastMCP\nserver = FastMCP('demo')\n@server.tool()\ndef lookup(query: str):\n    return query\n" };
+  const opts = { enabled: false, version: '1.4.0', pins: { 'fastmcp-tools': pin } };
+  const result = run(files, opts);
+  assert.equal(result.status, 'ok');
+  const [group] = result.result.evidence_groups;
+  assert.equal(group.coverage, 'complete');
+  const [tool] = group.facts;
+  assert.equal(tool.payload.name, 'lookup');
+  const names = new Map(result.result.entries.flatMap(e => e.evidence.native_symbols)
+    .map(node => [node.native, node.qualified_name]));
+  assert.equal(names.get(tool.subject), 'server.lookup');
+  assert.equal(names.get(tool.references.server), 'server.server');
 });

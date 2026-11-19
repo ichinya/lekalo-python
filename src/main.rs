@@ -29,6 +29,21 @@ const IR_VERSION: &str = "0.2.16";
 /// newest common version — 1.1.0 for native-symbol custody.
 const DECLARED: &[&str] = &["0.3.2", "0.6.4", "0.9.0", "0.9.1", "1.1.0"];
 const FASTAPI_DECLARED: &[&str] = &["0.3.2", "0.6.4", "0.9.0", "0.9.1", "1.1.0", "1.2.0"];
+const GENERIC_DECLARED: &[&str] = &[
+    "0.3.2", "0.6.4", "0.9.0", "0.9.1", "1.1.0", "1.2.0", "1.4.0",
+];
+
+const GENERIC_NATIVE: &[&str] = &["0.3.2", "0.6.4", "0.9.0", "0.9.1", "1.1.0", "1.4.0"];
+
+fn declared(profile: Option<&profile::Profile>) -> &'static [&'static str] {
+    match profile {
+        Some(p) if !p.evidence_pins.is_empty() && p.fastapi_policy.is_some() => GENERIC_DECLARED,
+        Some(p) if !p.evidence_pins.is_empty() => GENERIC_NATIVE,
+        Some(p) if p.fastapi_policy.is_some() => FASTAPI_DECLARED,
+        _ => DECLARED,
+    }
+}
+
 const REQUEST_FILE_FLAG: &str = "--lekalo-request-file";
 const DEFAULT_MAX_OUTPUT: usize = 8 * 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -57,12 +72,7 @@ fn serve() -> i32 {
         Ok(request) => request,
         Err(_) => return fatal(None, &identity, "request-not-json"),
     };
-    let declared = if profile.as_ref().is_some_and(|p| p.fastapi_policy.is_some()) {
-        FASTAPI_DECLARED
-    } else {
-        DECLARED
-    };
-    if let Err(reason) = admit(&request, declared) {
+    if let Err(reason) = admit(&request, declared(profile.as_ref())) {
         return fatal(Some(&request), &identity, reason);
     }
     let operation = request
@@ -265,11 +275,7 @@ fn describe(request: &Value, identity: &Value, profile: Option<&profile::Profile
     };
     let capabilities = sdk::build_capabilities(
         identity,
-        if profile.is_some_and(|p| p.fastapi_policy.is_some()) {
-            FASTAPI_DECLARED
-        } else {
-            DECLARED
-        },
+        declared(profile),
         &operations,
         &["stdin", "file"],
         &[TARGET],
@@ -343,8 +349,21 @@ fn scan_request(request: &Value, identity: &Value, profile: Option<&profile::Pro
         .get("protocol_version")
         .and_then(Value::as_str)
         .unwrap_or("0.3.2");
-    if (profile.fastapi_policy.is_some() && version != "1.2.0")
-        || (profile.fastapi_policy.is_none() && version == "1.2.0")
+    let generic = version == "1.4.0";
+    if generic
+        && (profile.fastapi_policy.is_some() != profile.evidence_pins.contains_key("fastapi-http"))
+    {
+        return error_envelope(
+            request,
+            identity,
+            "invalid",
+            "fastapi-policy-pins",
+            "the FastAPI policy and evidence pin must be enabled together",
+        );
+    }
+    if !generic
+        && ((profile.fastapi_policy.is_some() && version != "1.2.0")
+            || (profile.fastapi_policy.is_none() && version == "1.2.0"))
     {
         return error_envelope(
             request,
@@ -379,13 +398,14 @@ fn scan_request(request: &Value, identity: &Value, profile: Option<&profile::Pro
                     ));
                 }
             }
-            members.push((
-                "result".to_owned(),
-                Value::Object(vec![
-                    ("entries".to_owned(), Value::Array(outcome.entries)),
-                    ("truncated".to_owned(), Value::Bool(outcome.truncated)),
-                ]),
-            ));
+            let mut result = vec![
+                ("entries".to_owned(), Value::Array(outcome.entries)),
+                ("truncated".to_owned(), Value::Bool(outcome.truncated)),
+            ];
+            if generic {
+                result.push(("evidence_groups".to_owned(), Value::Array(outcome.evidence)));
+            }
+            members.push(("result".to_owned(), Value::Object(result)));
             Value::Object(members)
         }
         Err(reason) => error_envelope(request, identity, "infrastructure", reason, "scan refused"),
