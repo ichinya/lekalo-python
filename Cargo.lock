@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "lekalo-target-python"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lekalo-adapter-sdk-rust",
  "lekalo-python-fastapi",

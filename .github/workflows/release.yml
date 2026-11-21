@@ -1,0 +1,90 @@
+name: Release binaries
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-22.04, platform: linux-amd64, suffix: ''}
+          - {os: ubuntu-22.04-arm, platform: linux-arm64, suffix: ''}
+          - {os: macos-15-intel, platform: darwin-amd64, suffix: ''}
+          - {os: macos-15, platform: darwin-arm64, suffix: ''}
+          - {os: windows-2022, platform: windows-amd64, suffix: .exe}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_INCREMENTAL: '0'
+      PLATFORM: ${{ matrix.platform }}
+      SUFFIX: ${{ matrix.suffix }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Verify the tag and build both executables
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps --format-version 1 | node --input-type=module -e '
+            import assert from "node:assert/strict";
+            import {readFileSync} from "node:fs";
+            const {packages} = JSON.parse(readFileSync(0, "utf8"));
+            const scanner = packages.find(pkg => pkg.name === "lekalo-target-python");
+            assert.equal(process.env.GITHUB_REF_NAME, "v" + scanner.version);
+          '
+          cargo build --release --locked --bin lekalo-target-python
+          cargo build --release --locked --manifest-path crates/discovery/Cargo.toml --bin lekalo-python-discovery
+          mkdir dist
+          cp "target/release/lekalo-target-python$SUFFIX" "dist/lekalo-target-python-$PLATFORM$SUFFIX"
+          cp "crates/discovery/target/release/lekalo-python-discovery$SUFFIX" "dist/lekalo-python-discovery-$PLATFORM$SUFFIX"
+      - name: Test the released scanner
+        run: |
+          LEKALO_PYTHON_ADAPTER_BIN="$(pwd)/dist/lekalo-target-python-$PLATFORM$SUFFIX" \
+            node --test tests/scan-protocol.test.mjs tests/fastapi.test.mjs
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binaries-${{ matrix.platform }}
+          path: dist/
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+          overwrite: true
+
+  publish:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: binaries-*
+          merge-multiple: true
+          path: dist
+      - name: Publish the verified executables and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd dist
+          files=()
+          for platform in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64; do
+            suffix=
+            if [ "$platform" = windows-amd64 ]; then suffix=.exe; fi
+            files+=("lekalo-target-python-$platform$suffix" "lekalo-python-discovery-$platform$suffix")
+          done
+          sha256sum -- "${files[@]}" > SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "${GITHUB_REF_NAME#v}" --generate-notes "${files[@]}" SHA256SUMS.txt
