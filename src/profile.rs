@@ -20,6 +20,7 @@ pub struct Root {
     pub kind: RootKind,
     pub path: String,
     pub scope: String,
+    pub semantic_module: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -270,9 +271,12 @@ fn validate(candidate: &Value) -> Result<Option<Profile>, &'static str> {
     }
     let mut roots: Vec<Root> = Vec::with_capacity(roots_value.len());
     for root in roots_value {
-        let mut keys: Vec<&str> = root.member_names();
-        keys.sort_unstable();
-        if keys != ["kind", "path"] && keys != ["kind", "path", "scope"] {
+        if !root.is_object()
+            || root
+                .member_names()
+                .into_iter()
+                .any(|key| !matches!(key, "kind" | "path" | "scope" | "semanticModule"))
+        {
             return invalid("profile-invalid");
         }
         let kind = match root.get("kind").and_then(Value::as_str) {
@@ -289,6 +293,16 @@ fn validate(candidate: &Value) -> Result<Option<Profile>, &'static str> {
         if kind == RootKind::Tree && spelling.ends_with('/') {
             return invalid("profile-invalid");
         }
+        let semantic_module = match root.get("semanticModule") {
+            None => None,
+            Some(value) => {
+                let id = value
+                    .as_str()
+                    .filter(|id| is_module_id(id))
+                    .ok_or("profile-invalid")?;
+                Some(id.to_owned())
+            }
+        };
         let scope = if kind == RootKind::Tree {
             format!("{spelling}/**")
         } else {
@@ -311,6 +325,7 @@ fn validate(candidate: &Value) -> Result<Option<Profile>, &'static str> {
             kind,
             path: spelling.to_owned(),
             scope,
+            semantic_module,
         });
     }
     let mut exclusions: Vec<String> = Vec::new();
@@ -416,7 +431,7 @@ fn validate(candidate: &Value) -> Result<Option<Profile>, &'static str> {
                 roots
                     .iter()
                     .map(|root| {
-                        Value::Object(vec![
+                        let mut fields = vec![
                             (
                                 "kind".to_owned(),
                                 Value::Str(
@@ -429,7 +444,11 @@ fn validate(candidate: &Value) -> Result<Option<Profile>, &'static str> {
                             ),
                             ("path".to_owned(), Value::Str(root.path.clone())),
                             ("scope".to_owned(), Value::Str(root.scope.clone())),
-                        ])
+                        ];
+                        if let Some(module) = &root.semantic_module {
+                            fields.push(("semanticModule".to_owned(), Value::Str(module.clone())));
+                        }
+                        Value::Object(fields)
                     })
                     .collect(),
             ),
@@ -462,6 +481,14 @@ fn validate(candidate: &Value) -> Result<Option<Profile>, &'static str> {
         fastapi_policy: None,
         evidence_pins: BTreeMap::new(),
     }))
+}
+
+fn is_module_id(id: &str) -> bool {
+    id.len() <= 63
+        && id.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
 fn scope_segments(scope: &str) -> Vec<&str> {

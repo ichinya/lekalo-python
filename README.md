@@ -12,6 +12,22 @@ node --test tests/scan-protocol.test.mjs tests/fastapi.test.mjs
 
 Пока FastAPI подключается как библиотека на этапе сборки, а разрешённые providers профиля ограничены прежним протоколом. Обновление закреплённого FastAPI: измените `rev` в Cargo.toml, обновите Cargo.lock, выполните `node scripts/check-sources.mjs` и тесты.
 
+## Семантические модули в observed scan
+
+Если пакет Python и модуль Lekalo названы по-разному, укажите `semanticModule`
+у соответствующего корня чтения в профиле `--lekalo-project-profile-json`.
+Например, элемент `readRoots` может выглядеть так:
+
+```json
+{ "kind": "tree", "path": "apps/store", "semanticModule": "inventory" }
+```
+
+Для `store.models.Item` сканер предложит `inventory.store.models.Item`.
+Тот же параметр поддерживается у корня `file`. Без параметра остаётся обычное
+имя предложения. Модуль `inventory` должен быть объявлен в модели проекта.
+Python-имена, native IDs, ссылки и области чтения сохраняются. Предложения
+остаются неподтверждёнными, а сопоставление входит в digest профиля.
+
 Произвольный repo/ref и загрузка правил по компонентам требуют последующего resolver/provider API: [lekalo#239](https://github.com/ichinya/lekalo/issues/239), [lekalo#197](https://github.com/ichinya/lekalo/issues/197). Межпроцессные тесты с CLI ядра остаются host-conformance в основном репозитории.
 
 GitHub Actions запускает [проверки пакета](.github/workflows/ci.yml) для pull request и изменений в `main`.

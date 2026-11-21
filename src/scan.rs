@@ -183,7 +183,13 @@ pub fn run(profile: &Profile, version: &str) -> Result<Scan, &'static str> {
             } else {
                 REFS_PREDECESSOR
             });
-        let (produced, bounded) = file_entries(&file.path, &scan, &digest, stub, tier);
+        let semantic_module = profile
+            .roots
+            .iter()
+            .find(|root| root.path == file.root)
+            .and_then(|root| root.semantic_module.as_deref());
+        let (produced, bounded) =
+            file_entries(&file.path, &scan, &digest, stub, tier, semantic_module);
         let mut bound = overflow > 0 || bounded;
         bound |= accept_entries(produced, &mut entries, &mut total_symbols);
         if bound {
@@ -497,6 +503,7 @@ fn file_entries(
     digest: &str,
     stub: bool,
     tier: Tier,
+    semantic_module: Option<&str>,
 ) -> (Vec<(Value, usize)>, bool) {
     let ref_cap = if tier == Tier::Native {
         REFS_SUCCESSOR
@@ -559,6 +566,7 @@ fn file_entries(
                 digest,
                 stub,
                 tier,
+                semantic_module,
                 &mut bounded,
             )
         })
@@ -576,6 +584,7 @@ fn file_entries(
                 digest,
                 stub,
                 tier,
+                semantic_module,
                 &mut bounded,
             ) {
                 produced.push(row);
@@ -624,18 +633,21 @@ fn entry(
     digest: &str,
     stub: bool,
     tier: Tier,
+    semantic_module: Option<&str>,
     bounded: &mut bool,
 ) -> Option<(Value, usize)> {
     // Native display names allow more Unicode and length than semantic ids.
-    // Keep admissible proposals unchanged; otherwise use the full, stable
-    // native key inside the original module without renaming native evidence
-    // or inventing a module the canonical model does not declare.
-    let semantic = if is_semantic_id(&sym.qualified_name) {
-        sym.qualified_name.clone()
-    } else {
-        let module = sym.qualified_name.split('.').next().unwrap_or_default();
-        format!("{module}.python:{}", sym.native)
+    // Only the proposal gets the configured namespace. Native identities
+    // and references still use the actual Python source and names.
+    let mut semantic = match semantic_module {
+        Some(module) => format!("{module}.{}", sym.qualified_name),
+        None => sym.qualified_name.clone(),
     };
+    if !is_semantic_id(&semantic) {
+        let module = semantic_module
+            .unwrap_or_else(|| sym.qualified_name.split('.').next().unwrap_or_default());
+        semantic = format!("{module}.python:{}", sym.native);
+    }
     if !is_semantic_id(&semantic) {
         *bounded = true;
         return None;
@@ -851,7 +863,8 @@ mod tests {
             "a".repeat(249)
         );
         let scan = symbols::extract("pkg/mod.py", "pkg.mod", &source, false, "sha256:x");
-        let (entries, bounded) = file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native);
+        let (entries, bounded) =
+            file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native, None);
         assert!(bounded);
         assert_eq!(native_names(&entries), ["pkg.mod.short"]);
     }
@@ -860,7 +873,8 @@ mod tests {
     fn name_bounds_count_unicode_scalars_and_admit_the_exact_limit() {
         let source = format!("def {}():\n    pass\n", "я".repeat(248));
         let scan = symbols::extract("pkg/mod.py", "pkg.mod", &source, false, "sha256:x");
-        let (entries, bounded) = file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native);
+        let (entries, bounded) =
+            file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native, None);
         assert!(!bounded);
         let names = native_names(&entries);
         assert_eq!(names.len(), 1);
@@ -879,7 +893,8 @@ mod tests {
             .find(|row| row.qualified_name == "pkg.mod.A")
             .unwrap()
             .qualified_name = "a".repeat(257);
-        let (entries, bounded) = file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native);
+        let (entries, bounded) =
+            file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native, None);
         assert!(bounded);
         assert_eq!(native_names(&entries), ["pkg.mod.healthy"]);
     }
@@ -891,7 +906,8 @@ mod tests {
             "a".repeat(249)
         );
         let scan = symbols::extract("pkg/mod.py", "pkg.mod", &source, false, "sha256:x");
-        let (entries, bounded) = file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native);
+        let (entries, bounded) =
+            file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native, None);
         assert!(bounded);
         let mut names = native_names(&entries);
         names.sort();
@@ -921,7 +937,8 @@ mod tests {
         // one truncated file: the wire bound is per entry, not per file.
         let source: String = (0..300).map(|i| format!("v{i} = {i}\n")).collect();
         let scan = symbols::extract("pkg/mod.py", "pkg.mod", &source, false, "sha256:x");
-        let (entries, bounded) = file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native);
+        let (entries, bounded) =
+            file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native, None);
         assert!(!bounded);
         assert_eq!(entries.len(), 300);
     }
@@ -935,7 +952,8 @@ mod tests {
             .collect();
         let source = format!("class A:\n{methods}");
         let scan = symbols::extract("pkg/mod.py", "pkg.mod", &source, false, "sha256:x");
-        let (entries, bounded) = file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native);
+        let (entries, bounded) =
+            file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Native, None);
         assert!(bounded);
         assert_eq!(entries.len(), 1);
         assert_eq!(native_count(&entries[0].0), MAX_ENTRY_SYMBOLS);
@@ -964,8 +982,14 @@ mod tests {
         let name = "a".repeat(100);
         let source = format!("def {name}_x():\n    pass\ndef short():\n    pass\n");
         let scan = symbols::extract("pkg/mod.py", "pkg.mod", &source, false, "sha256:x");
-        let (entries, bounded) =
-            file_entries("pkg/mod.py", &scan, "sha256:x", false, Tier::Predecessor);
+        let (entries, bounded) = file_entries(
+            "pkg/mod.py",
+            &scan,
+            "sha256:x",
+            false,
+            Tier::Predecessor,
+            None,
+        );
         assert!(bounded);
         assert_eq!(entries.len(), 1);
         let Value::Object(members) = &entries[0].0 else {

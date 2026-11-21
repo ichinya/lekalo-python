@@ -132,6 +132,60 @@ test("unresolved profiles retain predecessor and custody behavior", () => {
   }
 });
 
+test("semantic modules scope proposals without changing Python evidence", () => {
+  const cwd = fixture({
+    "apps/store/__init__.py": "",
+    "apps/store/models.py": "class Item:\n    pass\ndef привет():\n    pass\n",
+    "config/urls.py": "def routes():\n    pass\n",
+    "tools/helper.py": "def only_local():\n    pass\n",
+  });
+  const base = {
+    ...profile(),
+    readRoots: [
+      { kind: "tree", path: "apps/store" },
+      { kind: "file", path: "config/urls.py" },
+      { kind: "file", path: "tools/helper.py" },
+    ],
+  };
+  const launch = {
+    ...base,
+    readRoots: [
+      { ...base.readRoots[0], semanticModule: "inventory" },
+      { ...base.readRoots[1], semanticModule: "public_api" },
+      base.readRoots[2],
+    ],
+  };
+  const original = run(cwd, base);
+  const mapped = run(cwd, launch);
+  assert.equal(mapped.status, "ok");
+  assert.equal(mapped.result.truncated, false);
+  assert.deepEqual(symbols(mapped), symbols(original));
+  const proposals = mapped.result.entries.map((entry) => JSON.parse(entry.detail).s);
+  assert(proposals.includes("inventory.store.models.Item"));
+  assert(proposals.includes("public_api.urls.routes"));
+  assert(proposals.includes("helper.only_local"));
+  const unicode = symbols(original).find((sym) => sym.qualified_name === "store.models.привет");
+  assert(proposals.includes(`inventory.python:${unicode.native}`));
+  const normalized = {
+    ...launch,
+    readRoots: launch.readRoots.map((root) => ({
+      ...root, scope: root.kind === "tree" ? `${root.path}/**` : root.path,
+    })),
+  };
+  assert.equal(mapped.evidence.scan_profile_digest, digest(normalized));
+});
+
+test("invalid semantic modules fail launch profile admission", () => {
+  const cwd = fixture({ "src/sample.py": "def short():\n    pass\n" });
+  for (const semanticModule of ["", "nested.module", "work-items", "Upper", "a".repeat(64), null, 1]) {
+    const launch = profile();
+    launch.readRoots[0].semanticModule = semanticModule;
+    const result = run(cwd, launch);
+    assert.equal(result.status, "error");
+    assert.equal(result.error.message, "profile-invalid");
+  }
+});
+
 for (const extension of ["py", "pyi"]) {
   test(`package read roots agree with their children and relative imports (${extension})`, () => {
     const cwd = fixture({
